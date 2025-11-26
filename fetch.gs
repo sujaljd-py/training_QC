@@ -4,7 +4,7 @@
  ***************************************************************/
 
 const CONFIG = {
-  GEMINI_API_KEY: "AIzaSyB5iRKoVAblr3Sj0Diu0Mqdzdv5rpcg2KA",   // <<-- REQUIRED
+  GEMINI_API_KEY: "Paste the Given API Key",   // <<-- REQUIRED
   SHEET_ID: "15Z_VEjGlSuxF6fD4J1m6x6E7u-p8HVBM0Z_rxAGxn4I",
   SHEET_TAB_NAME: "QC Results",
   TOPICS_TAB_NAME: "Topics",
