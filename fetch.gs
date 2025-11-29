@@ -2,25 +2,28 @@
  * CONFIGURATION
  */
 const CONFIG = {
+  SPREADSHEET_ID: '15Z_VEjGlSuxF6fD4J1m6x6E7u-p8HVBM0Z_rxAGxn4I', // <--- PASTE YOUR SHEET ID HERE
+  SHEET_TAB_NAME: 'FetchLogs',
+  
   CALENDAR_ID: 'primary',
   DAYS_TO_LOOK_BACK: 14, 
   INCLUDE_REGEX: /(Hindi|English)/i, 
   EXCLUDE_REGEX: /with/i,
-  MIN_LENGTH_CHARS: 500 // Min chars to count as a valid session
+  MIN_LENGTH_CHARS: 500 
 };
 
 function logMeetingTranscripts() {
   const now = new Date();
   
-  // 1. Date Setup
+  // 1. Setup Dates
   const startDate = new Date();
   startDate.setDate(now.getDate() - CONFIG.DAYS_TO_LOOK_BACK);
   const futureDate = new Date();
   futureDate.setFullYear(now.getFullYear() + 2); 
 
-  Logger.log(`=== SCANNING FOR COMPLETED SESSIONS ===`);
-  Logger.log(`Range: ${startDate.toDateString()} to Now (including future scheduled dates)`);
+  Logger.log(`=== STARTING FETCH & LOG PROCESS ===`);
 
+  // 2. FETCH EVENTS
   let events = [];
   try {
     const response = Calendar.Events.list(CONFIG.CALENDAR_ID, {
@@ -40,9 +43,12 @@ function logMeetingTranscripts() {
     return;
   }
 
-  // --- COUNTER INITIALIZATION ---
+  // 3. INITIALIZE DATA ARRAY
+  // We will push all valid rows here
+  let rowsToLog = [];
   let totalValidSessions = 0;
 
+  // 4. PROCESS EVENTS
   events.forEach(event => {
     const title = event.summary || ""; 
     
@@ -51,20 +57,10 @@ function logMeetingTranscripts() {
     if (!CONFIG.INCLUDE_REGEX.test(title)) return;
     if (!event.attachments || event.attachments.length === 0) return;
 
-    let headerPrinted = false;
-    let eventHasValidTranscript = false; // Flag for this specific event
-
     for (const file of event.attachments) {
       
       // Look for Google Docs
       if (file.mimeType === 'application/vnd.google-apps.document') {
-
-        if (!headerPrinted) {
-          Logger.log(`\n--------------------------------------------------`);
-          Logger.log(`EVENT: "${title}"`); 
-          Logger.log(`DATE:  ${event.start.dateTime || event.start.date}`);
-          headerPrinted = true;
-        }
 
         // Get ID
         let fileId = file.fileId;
@@ -81,44 +77,93 @@ function logMeetingTranscripts() {
           const totalLength = fullText.length;
 
           // Check Length
-          if (totalLength < CONFIG.MIN_LENGTH_CHARS) {
-            Logger.log(`   ⚠️ SKIPPED FILE: "${file.title}" (Too short: ${totalLength} chars)`);
-            continue;
+          if (totalLength < CONFIG.MIN_LENGTH_CHARS) continue;
+
+          // --- GATHER DATA POINTS ---
+
+          // A. Duration Estimate
+          const wordCount = fullText.split(/\s+/).length;
+          const estimatedDuration = Math.round(wordCount / 130);
+
+          // B. Attendees
+          let attendeeList = "Unknown";
+          if (event.attendees && event.attendees.length > 0) {
+             attendeeList = event.attendees
+               .map(a => a.displayName || a.email) // Use Name, fallback to Email
+               .join(', ');
           }
 
-          // Generate Preview
-          const previewLines = fullText.split('\n')
-            .filter(line => line.trim() !== '') 
-            .slice(0, 3)                        
-            .join('\n     ');                   
+          // C. Event Date
+          const eventDate = new Date(event.start.dateTime || event.start.date);
 
-          Logger.log(`   ✅ VALID TRANSCRIPT: "${file.title}"`);
-          Logger.log(`     📏 LENGTH: ${totalLength} chars`);
-          Logger.log(`     📝 PREVIEW:\n     ${previewLines}`);
+          // PUSH TO DATA ARRAY
+          rowsToLog.push([
+            eventDate,           // Date
+            title,               // Title
+            estimatedDuration,   // Duration (Mins)
+            totalLength,         // Total Transcript Characters
+            fileId,              // Document ID
+            attendeeList,        // Attendee Names
+            file.title,          // Transcript File Name
+            file.fileUrl         // Transcript File Link
+          ]);
 
-          // Mark this event as valid
-          eventHasValidTranscript = true;
+          Logger.log(`✅ QUEUED: ${title} (${estimatedDuration} mins)`);
+          totalValidSessions++;
 
         } catch (e) {
-          Logger.log(`     ❌ EXPORT ERROR: ${e.message}`);
+          Logger.log(`❌ ERROR processing ${title}: ${e.message}`);
         }
       }
     }
-
-    // Increment Counter if at least one valid transcript was found for this event
-    if (eventHasValidTranscript) {
-      totalValidSessions++;
-    }
   });
+
+  // 5. WRITE TO SHEET
+  if (rowsToLog.length > 0) {
+    saveToSheet(rowsToLog);
+  } else {
+    Logger.log("No valid training sessions found to log.");
+  }
   
-  // --- FINAL SUMMARY ---
+  // FINAL SUMMARY
   Logger.log(`\n==============================================`);
-  Logger.log(`📊 SUMMARY REPORT`);
-  Logger.log(`----------------------------------------------`);
-  Logger.log(`Total Events Scanned: ${events.length}`);
-  Logger.log(`Total Valid Sessions: ${totalValidSessions}`);
-  Logger.log(`(Matches Title + Has Transcript + Sufficient Length)`);
+  Logger.log(`SUMMARY: ${totalValidSessions} Sessions Logged to Sheet.`);
   Logger.log(`==============================================`);
+}
+
+/**
+ * HELPER: Write data to Google Sheet
+ */
+function saveToSheet(newRows) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(CONFIG.SHEET_TAB_NAME);
+
+  // Create Sheet if it doesn't exist
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.SHEET_TAB_NAME);
+    // Add Headers
+    sheet.appendRow([
+      "Training Date", 
+      "Training Title", 
+      "Duration (Mins)", 
+      "Char Count", 
+      "Doc ID", 
+      "Attendees", 
+      "File Name", 
+      "File Link"
+    ]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, 8).setFontWeight("bold");
+    Logger.log(`Created new tab: ${CONFIG.SHEET_TAB_NAME}`);
+  }
+
+  // Get next empty row
+  const lastRow = sheet.getLastRow();
+  const nextRow = lastRow + 1;
+
+  // Write Batch
+  sheet.getRange(nextRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+  Logger.log(`Written ${newRows.length} rows to spreadsheet.`);
 }
 
 /**
