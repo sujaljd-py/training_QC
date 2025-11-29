@@ -6,7 +6,7 @@ const QC_CONFIG = {
   SHEET_ID: '15Z_VEjGlSuxF6fD4J1m6x6E7u-p8HVBM0Z_rxAGxn4I', 
   
   // 2. PASTE YOUR GEMINI API KEY
-  API_KEY: 'AIzaSyCJ3RNKXhaRfd0SF6i5SPy00nUPQf3Uz90', 
+  API_KEY: 'PLease pasete the API key dont leak it anymore', 
   
   // 3. MODEL: Setting to Gemini 2.0 Flash Lite (Preview)
   // If this fails, revert to 'gemini-1.5-flash'
