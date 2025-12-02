@@ -9,27 +9,368 @@ const CONFIG = {
   
   // Calendar Fetch Settings
   CALENDAR_ID: 'primary',
-  DAYS_TO_LOOK_BACK: 14,
+  DAYS_TO_LOOK_BACK: 6,
   INCLUDE_REGEX: /(Hindi|English)/i,
   EXCLUDE_REGEX: /with/i,
   MIN_LENGTH_CHARS: 500,
   WORDS_PER_MINUTE: 130,
   
   // Gemini QC Settings
-  GEMINI_API_KEY: '-', // 🔥 PASTE YOUR GEMINI API KEY HERE
+  GEMINI_API_KEY: '--', // 🔥 PASTE YOUR GEMINI API KEY HERE
   GEMINI_MODEL: 'gemini-2.0-flash-lite-preview-02-05',
-  TITLE_CLEAN_REGEX: /(\s+in\s+(Hindi|English).*)|(\s*\(.*\))/gi
+  TITLE_CLEAN_REGEX: /(\s+in\s+(Hindi|English).*)|(\s*\(.*\))/gi,
+
+   
+  // Email Notification Settings
+  NOTIFICATION_EMAIL: 'sujal.jadhv@ezeetechnosys.com', // 🔥 CHANGE THIS TO YOUR EMAIL
+  SEND_EMAIL_NOTIFICATIONS: true, // Set to false to disable emails
 };
+
+
+/**
+ * 📧 SEND QC COMPLETION EMAIL
+ * Call this at the end of runCompleteQCWorkflow() or runWeeklyQCWorkflow()
+ * 
+ * @param {Object} stats - Statistics object with counts
+ * @param {string} status - 'SUCCESS' or 'FAILED'
+ * @param {string} errorMessage - Optional error message if failed
+ */
+function sendQCCompletionEmail(stats, status = 'SUCCESS', errorMessage = '') {
+  // Check if email notifications are enabled
+  if (!CONFIG.SEND_EMAIL_NOTIFICATIONS) {
+    Logger.log('📧 Email notifications disabled in CONFIG');
+    return;
+  }
+  
+  if (!CONFIG.NOTIFICATION_EMAIL || CONFIG.NOTIFICATION_EMAIL === 'your.email@example.com') {
+    Logger.log('⚠️  Email notification skipped: No valid email configured');
+    return;
+  }
+  
+  // Ensure stats object exists with default values
+  if (!stats) {
+    stats = {};
+  }
+  
+  // Set defaults for all stats
+  stats.totalScanned = stats.totalScanned || 0;
+  stats.passedValidation = stats.passedValidation || 0;
+  stats.transcriptsRead = stats.transcriptsRead || 0;
+  stats.qcAnalyzed = stats.qcAnalyzed || 0;
+  stats.totalInputTokens = stats.totalInputTokens || 0;
+  stats.totalOutputTokens = stats.totalOutputTokens || 0;
+  
+  try {
+    const sheetUrl = `https://docs.google.com/spreadsheets/d/${extractSheetId(CONFIG.SPREADSHEET_ID)}`;
+    const currentDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'EEEE, MMMM dd, yyyy');
+    const currentTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'hh:mm a');
+    
+    // Determine subject based on status
+    let subject = '';
+    let statusEmoji = '';
+    
+    if (status === 'SUCCESS') {
+      subject = `✅ Weekly QC Report - ${currentDate}`;
+      statusEmoji = '✅';
+    } else {
+      subject = `❌ QC Workflow Failed - ${currentDate}`;
+      statusEmoji = '❌';
+    }
+    
+    // Build HTML email body
+    let htmlBody = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .header p {
+      margin: 5px 0 0 0;
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    .content {
+      padding: 30px;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .status-success {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .status-failed {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      background-color: #f9f9f9;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .stats-table tr {
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .stats-table tr:last-child {
+      border-bottom: none;
+    }
+    .stats-table td {
+      padding: 15px;
+      font-size: 14px;
+    }
+    .stats-table td:first-child {
+      font-weight: 600;
+      color: #555;
+      width: 60%;
+    }
+    .stats-table td:last-child {
+      text-align: right;
+      font-weight: 700;
+      color: #667eea;
+      font-size: 16px;
+    }
+    .token-row {
+      background-color: #fff3cd;
+    }
+    .cta-button {
+      display: inline-block;
+      padding: 12px 30px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      text-decoration: none;
+      border-radius: 25px;
+      font-weight: 600;
+      margin: 20px 0;
+      text-align: center;
+    }
+    .cta-button:hover {
+      opacity: 0.9;
+    }
+    .footer {
+      background-color: #f9f9f9;
+      padding: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: #777;
+      border-top: 1px solid #e0e0e0;
+    }
+    .error-box {
+      background-color: #f8d7da;
+      border-left: 4px solid #dc3545;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+      color: #721c24;
+    }
+    .highlight {
+      font-weight: 700;
+      color: #667eea;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>${statusEmoji} Training QC Workflow Report</h1>
+      <p>${currentDate} • ${currentTime}</p>
+    </div>
+    
+    <!-- Content -->
+    <div class="content">
+      <!-- Status Badge -->
+      <div class="status-badge ${status === 'SUCCESS' ? 'status-success' : 'status-failed'}">
+        ${status === 'SUCCESS' ? '✅ Workflow Completed Successfully' : '❌ Workflow Failed'}
+      </div>
+      
+      ${status === 'FAILED' ? `
+      <!-- Error Message -->
+      <div class="error-box">
+        <strong>Error Details:</strong><br>
+        ${errorMessage || 'Unknown error occurred'}
+      </div>
+      ` : ''}
+      
+      <!-- Summary Statistics -->
+      <h2 style="color: #333; margin-top: 20px;">📊 Weekly Summary</h2>
+      
+      <table class="stats-table">
+        <tr>
+          <td>📅 Total Training Sessions Scanned</td>
+          <td>${stats.totalScanned || 0}</td>
+        </tr>
+        <tr>
+          <td>✅ Passed Validation Conditions</td>
+          <td>${stats.passedValidation || 0}</td>
+        </tr>
+        <tr>
+          <td>📄 Transcripts Successfully Read</td>
+          <td>${stats.transcriptsRead || 0}</td>
+        </tr>
+        <tr>
+          <td>🤖 QC Analyses Completed</td>
+          <td>${stats.qcAnalyzed || 0}</td>
+        </tr>
+        <tr class="token-row">
+          <td>🔤 Total Input Tokens Used</td>
+          <td>${stats.totalInputTokens || 0}</td>
+        </tr>
+        <tr class="token-row">
+          <td>🔤 Total Output Tokens Used</td>
+          <td>${stats.totalOutputTokens || 0}</td>
+        </tr>
+      </table>
+      
+      ${status === 'SUCCESS' && stats.qcAnalyzed > 0 ? `
+      <!-- Additional Insights -->
+      <h3 style="color: #333; margin-top: 25px;">📈 Key Insights</h3>
+      <ul style="color: #555; line-height: 1.8;">
+        <li><span class="highlight">${stats.passedValidation}</span> out of <span class="highlight">${stats.totalScanned}</span> sessions had valid transcripts</li>
+        <li>Average tokens per analysis: <span class="highlight">${Math.round((stats.totalInputTokens + stats.totalOutputTokens) / stats.qcAnalyzed)}</span></li>
+        <li>Success rate: <span class="highlight">${Math.round((stats.qcAnalyzed / stats.totalScanned) * 100)}%</span></li>
+      </ul>
+      ` : ''}
+      
+      <!-- CTA Button -->
+      <div style="text-align: center; margin-top: 30px;">
+        <a href="${sheetUrl}" class="cta-button">
+          📊 View Complete QC Results
+        </a>
+      </div>
+      
+      <p style="color: #777; font-size: 13px; text-align: center; margin-top: 15px;">
+        Click the button above to access the full spreadsheet with detailed QC results
+      </p>
+    </div>
+    
+    <!-- Footer -->
+    <div class="footer">
+      <p>🤖 Automated Training QC System</p>
+      <p>Yanolja Cloud Solution Training Hub</p>
+      <p style="margin-top: 10px;">
+        <a href="${sheetUrl}" style="color: #667eea; text-decoration: none;">View Spreadsheet</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+    
+    // Plain text version (fallback)
+    let plainBody = `
+TRAINING QC WORKFLOW REPORT
+${status === 'SUCCESS' ? '✅ COMPLETED SUCCESSFULLY' : '❌ FAILED'}
+Date: ${currentDate}
+Time: ${currentTime}
+
+${status === 'FAILED' ? `ERROR: ${errorMessage}\n` : ''}
+
+WEEKLY SUMMARY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📅 Total Training Sessions Scanned: ${stats.totalScanned || 0}
+✅ Passed Validation Conditions: ${stats.passedValidation || 0}
+📄 Transcripts Successfully Read: ${stats.transcriptsRead || 0}
+🤖 QC Analyses Completed: ${stats.qcAnalyzed || 0}
+🔤 Total Input Tokens Used: ${stats.totalInputTokens || 0}
+🔤 Total Output Tokens Used: ${stats.totalOutputTokens || 0}
+
+📊 VIEW COMPLETE RESULTS:
+${sheetUrl}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 Automated Training QC System
+Yanolja Cloud Solution Training Hub
+    `;
+    
+    // Send email
+    MailApp.sendEmail({
+      to: CONFIG.NOTIFICATION_EMAIL,
+      subject: subject,
+      body: plainBody,
+      htmlBody: htmlBody,
+      name: 'Training QC System'
+    });
+    
+    Logger.log(`✅ Email notification sent to ${CONFIG.NOTIFICATION_EMAIL}`);
+    
+  } catch (e) {
+    Logger.log(`❌ Failed to send email notification: ${e.message}`);
+  }
+}
+
+/**
+ * 📊 EXAMPLE: How to use this in your runCompleteQCWorkflow()
+ * Add this code at the END of your runCompleteQCWorkflow() function
+ */
+/*
+
+// At the end of runCompleteQCWorkflow(), before the final Logger.log:
+
+  // Prepare stats for email
+  const emailStats = {
+    totalScanned: events.length,
+    passedValidation: processedCount,
+    transcriptsRead: processedCount,
+    qcAnalyzed: analyzedCount,
+    totalInputTokens: 0,  // You can track this if needed
+    totalOutputTokens: 0  // You can track this if needed
+  };
+  
+  // Send success email
+  sendQCCompletionEmail(emailStats, 'SUCCESS');
+
+  Logger.log(`\n✅ ========== WORKFLOW COMPLETE ==========`);
+  Logger.log(`   📥 New records fetched & logged: ${processedCount}`);
+  Logger.log(`   🤖 New records analyzed: ${analyzedCount}`);
+
+*/
+
+
 
 /**
  * ⭐⭐⭐ MAIN FUNCTION - RUN THIS ONE ⭐⭐⭐
- * Complete Workflow:
- * 1. Fetch training records from Google Calendar
- * 2. Write to Fetch Logs
- * 3. Run QC Analysis on SUCCESS records
+ * Sequential Processing:
+ * For each calendar event:
+ *   1. Validate transcript
+ *   2. Write to Fetch Logs
+ *   3. Run QC Analysis immediately
+ *   4. Write to QC Results
+ *   5. Move to next one
  */
 function runCompleteQCWorkflow() {
-  Logger.log("🚀 ========== STARTING COMPLETE QC WORKFLOW ==========\n");
+  Logger.log("🚀 ========== STARTING SEQUENTIAL QC WORKFLOW ==========\n");
   
   const cleanSheetId = extractSheetId(CONFIG.SPREADSHEET_ID);
   if (!cleanSheetId) {
@@ -39,78 +380,26 @@ function runCompleteQCWorkflow() {
   
   const ss = SpreadsheetApp.openById(cleanSheetId);
   
-  // ==================== STEP 1: FETCH FROM CALENDAR ====================
-  Logger.log("📅 STEP 1: Fetching training records from Google Calendar...\n");
-  
-  const newRecords = fetchMeetingTranscripts(ss);
-  
-  if (newRecords.length === 0) {
-    Logger.log("✅ No new training records found. Everything is up to date!\n");
-    return;
-  }
-  
-  Logger.log(`✅ Fetched ${newRecords.length} new records and wrote to Fetch Logs\n`);
-  
-  // ==================== STEP 2: RUN QC ANALYSIS ====================
-  Logger.log("🤖 STEP 2: Running QC Analysis on SUCCESS records...\n");
-  
+  // Setup sheets
+  const logSheet = setupLogSheet(ss);
   const resultSheet = setupResultSheet(ss);
+  
+  // Get existing IDs to avoid duplicates
+  const existingLogIds = getExistingLogIds(logSheet);
   const processedQCIds = getProcessedDocIds(resultSheet);
   
-  let analyzedCount = 0;
+  Logger.log(`📋 Already logged: ${existingLogIds.length} records`);
+  Logger.log(`📋 Already analyzed: ${processedQCIds.length} records\n`);
   
-  for (let i = 0; i < newRecords.length; i++) {
-    const record = newRecords[i];
-    
-    // Only analyze SUCCESS records that haven't been analyzed yet
-    if (record.status === "SUCCESS" && !processedQCIds.includes(record.docId)) {
-      Logger.log(`[${i + 1}/${newRecords.length}] 🤖 Analyzing: "${record.title}"`);
-      analyzeRecord(record, ss, resultSheet);
-      analyzedCount++;
-    } else if (record.status !== "SUCCESS") {
-      Logger.log(`[${i + 1}/${newRecords.length}] ⏭️  Skipping: "${record.title}" - Status: ${record.status}`);
-    } else {
-      Logger.log(`[${i + 1}/${newRecords.length}] ⏭️  Skipping: "${record.title}" - Already analyzed`);
-    }
-  }
-  
-  Logger.log(`\n✅ ========== WORKFLOW COMPLETE ==========`);
-  Logger.log(`   📥 Fetched & Logged: ${newRecords.length} records`);
-  Logger.log(`   🤖 QC Analyzed: ${analyzedCount} records`);
-}
-
-// ============================================================================
-// PART 1: CALENDAR FETCH FUNCTIONS
-// ============================================================================
-
-/**
- * Fetch meeting transcripts from Google Calendar
- * Returns array of new records that were logged
- */
-function fetchMeetingTranscripts(ss) {
+  // ==================== FETCH CALENDAR EVENTS ====================
   const now = new Date();
   const startDate = new Date();
   startDate.setDate(now.getDate() - CONFIG.DAYS_TO_LOOK_BACK);
   const futureDate = new Date();
   futureDate.setFullYear(now.getFullYear() + 2);
 
-  Logger.log(`   Date Range: ${startDate.toDateString()} to Future`);
+  Logger.log(`📅 Fetching calendar events from ${startDate.toDateString()}...\n`);
 
-  // 1. Get or create Fetch Logs sheet
-  let sheet = ss.getSheetByName(CONFIG.FETCH_LOGS_TAB);
-  if (!sheet) {
-    Logger.log(`   Creating new tab: ${CONFIG.FETCH_LOGS_TAB}`);
-    sheet = ss.insertSheet(CONFIG.FETCH_LOGS_TAB);
-    sheet.appendRow(["Doc ID", "Title", "Status", "Date", "Duration (Mins)", "Link"]);
-    sheet.setFrozenRows(1);
-    sheet.getRange(1, 1, 1, 6).setFontWeight("bold");
-  }
-
-  // 2. Get existing Doc IDs to avoid duplicates
-  const existingData = sheet.getDataRange().getValues();
-  const existingDocIds = existingData.slice(1).map(row => row[0]).filter(id => id !== "");
-
-  // 3. Fetch Calendar Events
   let events = [];
   try {
     const response = Calendar.Events.list(CONFIG.CALENDAR_ID, {
@@ -121,37 +410,43 @@ function fetchMeetingTranscripts(ss) {
     });
     events = response.items;
   } catch (e) {
-    Logger.log(`   ❌ Could not access Calendar: ${e.message}`);
-    return [];
+    Logger.log(`❌ Could not access Calendar: ${e.message}`);
+    return;
   }
 
   if (!events || events.length === 0) {
-    Logger.log("   ⚠️ No events found in Calendar for this date range.");
-    return [];
+    Logger.log("⚠️ No events found in Calendar.");
+    return;
   }
 
-  Logger.log(`   Found ${events.length} total calendar events. Filtering...`);
+  Logger.log(`Found ${events.length} total calendar events. Processing...\n`);
 
-  let rowsToLog = [];
-  let newRecords = [];
+  let processedCount = 0;
+  let analyzedCount = 0;
 
-  // 4. Process each event
-  events.forEach(event => {
+  // ==================== PROCESS EACH EVENT SEQUENTIALLY ====================
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+    const event = events[eventIndex];
     const title = event.summary || "No Title";
 
-    // Filter 1: Exclude
-    if (CONFIG.EXCLUDE_REGEX.test(title)) return;
+    // FILTER 1: Exclude regex
+    if (CONFIG.EXCLUDE_REGEX.test(title)) {
+      continue;
+    }
 
-    // Filter 2: Include
-    if (!CONFIG.INCLUDE_REGEX.test(title)) return;
+    // FILTER 2: Include regex
+    if (!CONFIG.INCLUDE_REGEX.test(title)) {
+      continue;
+    }
 
-    // Get event date
+    Logger.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    Logger.log(`[${eventIndex + 1}/${events.length}] 📝 Processing: "${title}"`);
+    Logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // Get event metadata
     let eventDate = new Date(event.start.dateTime || event.start.date);
     let finalDuration = 0;
-    let status = "NOT FOUND / MISSING";
-    let docId = "N/A";
-    let fileLink = "N/A";
-
+    
     // Calculate duration from calendar
     if (event.start.dateTime && event.end.dateTime) {
       const start = new Date(event.start.dateTime);
@@ -159,88 +454,148 @@ function fetchMeetingTranscripts(ss) {
       finalDuration = Math.round((end - start) / 1000 / 60);
     }
 
-    // Check for transcript attachment
-    if (event.attachments && event.attachments.length > 0) {
-      for (const file of event.attachments) {
-        if (file.mimeType === 'application/vnd.google-apps.document') {
-          let fileId = extractFileId(file);
-          if (!fileId) continue;
-
-          // Skip if already logged
-          if (existingDocIds.includes(fileId)) continue;
-
-          try {
-            const fullText = exportDocAsText(fileId);
-            const totalLength = fullText.length;
-            const wordCount = fullText.split(/\s+/).length;
-
-            if (totalLength < CONFIG.MIN_LENGTH_CHARS) continue;
-
-            // FOUND VALID TRANSCRIPT
-            docId = fileId;
-            fileLink = file.fileUrl;
-            status = "SUCCESS";
-
-            // Estimate duration from word count if needed
-            if (finalDuration === 0) {
-              const estMins = Math.round(wordCount / CONFIG.WORDS_PER_MINUTE);
-              if (estMins > 5) {
-                finalDuration = estMins;
-              }
-            }
-
-            break; // Stop looking for more docs in this event
-          } catch (e) {
-            // Continue to next attachment
-          }
-        }
-      }
+    // Check for attachments
+    if (!event.attachments || event.attachments.length === 0) {
+      Logger.log(`   ⚠️  No attachments found. Skipping.`);
+      continue;
     }
 
-    // Only log if we found a valid doc that's not already logged
-    if (docId !== "N/A" && !existingDocIds.includes(docId)) {
+    Logger.log(`   📎 Found ${event.attachments.length} attachment(s). Checking...`);
+
+    // Look for valid transcript
+    let validTranscriptFound = false;
+
+    for (const file of event.attachments) {
+      if (file.mimeType !== 'application/vnd.google-apps.document') {
+        continue;
+      }
+
+      Logger.log(`   📄 Checking document: "${file.title}"`);
+
+      const fileId = extractFileId(file);
+      if (!fileId) {
+        Logger.log(`      ❌ Could not extract file ID. Skipping.`);
+        continue;
+      }
+
+      // STEP 1: CHECK IF ALREADY LOGGED
+      if (existingLogIds.includes(fileId)) {
+        Logger.log(`      ⏭️  Already logged in Fetch Logs. Skipping.`);
+        continue;
+      }
+
+      // STEP 2: VALIDATE TRANSCRIPT
+      let transcriptText = "";
+      try {
+        transcriptText = exportDocAsText(fileId);
+      } catch (e) {
+        Logger.log(`      ❌ Failed to download: ${e.message}`);
+        continue;
+      }
+
+      const totalLength = transcriptText.length;
+      const wordCount = transcriptText.split(/\s+/).length;
+
+      Logger.log(`      📏 Length: ${totalLength} chars, ${wordCount} words`);
+
+      // Validate minimum length
+      if (totalLength < CONFIG.MIN_LENGTH_CHARS) {
+        Logger.log(`      ⚠️  Too short (min: ${CONFIG.MIN_LENGTH_CHARS}). Skipping.`);
+        continue;
+      }
+
+      // Estimate duration if needed
+      if (finalDuration === 0) {
+        const estMins = Math.round(wordCount / CONFIG.WORDS_PER_MINUTE);
+        if (estMins > 5) {
+          finalDuration = estMins;
+        }
+      }
+
       const formattedDate = Utilities.formatDate(eventDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      const fileLink = file.fileUrl;
+
+      Logger.log(`      ✅ VALID TRANSCRIPT FOUND!`);
+      validTranscriptFound = true;
+
+      // ========== STEP 3: WRITE TO FETCH LOGS ==========
+      Logger.log(`\n   📝 STEP 1: Writing to Fetch Logs...`);
       
-      rowsToLog.push([
-        docId,
+      logSheet.appendRow([
+        fileId,
         title,
-        status,
+        "SUCCESS",
         formattedDate,
         finalDuration,
         fileLink
       ]);
+      
+      existingLogIds.push(fileId); // Add to array to prevent re-processing
+      processedCount++;
+      
+      Logger.log(`      ✅ Written to Fetch Logs (Row ${logSheet.getLastRow()})`);
 
-      newRecords.push({
-        docId: docId,
-        title: title,
-        status: status,
-        date: formattedDate,
-        duration: finalDuration,
-        link: fileLink
-      });
+      // ========== STEP 4: RUN QC ANALYSIS IMMEDIATELY ==========
+      Logger.log(`\n   🤖 STEP 2: Running QC Analysis...`);
 
-      Logger.log(`   ✅ Found: "${title}" (${status})`);
+      // Check if already analyzed
+      if (processedQCIds.includes(fileId)) {
+        Logger.log(`      ⏭️  Already analyzed. Skipping QC.`);
+      } else {
+        const record = {
+          docId: fileId,
+          title: title,
+          status: "SUCCESS",
+          date: formattedDate,
+          duration: finalDuration,
+          link: fileLink,
+          transcriptText: transcriptText // Pass the already-downloaded transcript
+        };
+
+        analyzeRecord(record, ss, resultSheet);
+        processedQCIds.push(fileId);
+        analyzedCount++;
+      }
+
+      Logger.log(`   ✅ COMPLETE for this event!\n`);
+
+      break; // Found valid transcript, move to next event
     }
-  });
 
-  // 5. Write to sheet
-  if (rowsToLog.length > 0) {
-    const lastRow = sheet.getLastRow();
-    const nextRow = lastRow + 1;
-    sheet.getRange(nextRow, 1, rowsToLog.length, rowsToLog[0].length).setValues(rowsToLog);
-    Logger.log(`   💾 Wrote ${rowsToLog.length} new records to Fetch Logs`);
+    if (!validTranscriptFound) {
+      Logger.log(`   ❌ No valid transcript found for this event.\n`);
+    }
   }
+  
+  Logger.log(`\n✅ ========== WORKFLOW COMPLETE ==========`);
+  Logger.log(`   📥 New records fetched & logged: ${processedCount}`);
+  Logger.log(`   🤖 New records analyzed: ${analyzedCount}`);
 
-  return newRecords;
+  sendQCCompletionEmail({
+    totalScanned: events.length,
+    passedValidation: processedCount,
+    transcriptsRead: processedCount,
+    qcAnalyzed: analyzedCount,
+    totalInputTokens: 0,
+    totalOutputTokens: 0
+  }, 'SUCCESS');
 }
 
 // ============================================================================
-// PART 2: QC ANALYSIS FUNCTIONS
+// SETUP FUNCTIONS
 // ============================================================================
 
-/**
- * Setup QC Results sheet
- */
+function setupLogSheet(ss) {
+  let sheet = ss.getSheetByName(CONFIG.FETCH_LOGS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.FETCH_LOGS_TAB);
+    sheet.appendRow(["Doc ID", "Title", "Status", "Date", "Duration (Mins)", "Link"]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, 6).setFontWeight("bold");
+  }
+  return sheet;
+}
+
 function setupResultSheet(ss) {
   let resultSheet = ss.getSheetByName(CONFIG.QC_RESULTS_TAB);
   
@@ -260,18 +615,22 @@ function setupResultSheet(ss) {
   return resultSheet;
 }
 
-/**
- * Get processed Doc IDs from QC Results
- */
+function getExistingLogIds(logSheet) {
+  const data = logSheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  return data.slice(1).map(row => row[0]).filter(id => id !== "");
+}
+
 function getProcessedDocIds(resultSheet) {
   const data = resultSheet.getDataRange().getValues();
   if (data.length <= 1) return [];
   return data.slice(1).map(row => row[0]).filter(id => id !== "");
 }
 
-/**
- * Analyze a single record with Gemini
- */
+// ============================================================================
+// QC ANALYSIS FUNCTION
+// ============================================================================
+
 function analyzeRecord(record, ss, resultSheet) {
   const docId = record.docId;
   const fullTitle = String(record.title);
@@ -280,12 +639,12 @@ function analyzeRecord(record, ss, resultSheet) {
   let cleanTitle = fullTitle.replace(CONFIG.TITLE_CLEAN_REGEX, "").trim();
   cleanTitle = cleanTitle.replace(/-\s*$/, "").trim();
   
-  Logger.log(`      📋 Looking for criteria: "${cleanTitle}"`);
+  Logger.log(`      📋 Looking for criteria tab: "${cleanTitle}"`);
   
   const criteriaSheet = ss.getSheetByName(cleanTitle);
   
   if (!criteriaSheet) {
-    Logger.log(`      ❌ Criteria tab not found`);
+    Logger.log(`      ❌ Criteria tab "${cleanTitle}" not found`);
     resultSheet.appendRow([
       docId, record.date, fullTitle, record.duration, record.link,
       "SKIPPED", `Tab Not Found: ${cleanTitle}`, 
@@ -302,22 +661,28 @@ function analyzeRecord(record, ss, resultSheet) {
     .join("\n");
   
   const totalTopics = criteriaData.length - 1;
-  Logger.log(`      ✅ Found ${totalTopics} topics`);
+  Logger.log(`      ✅ Found ${totalTopics} required topics`);
   
-  // Step 3: Download transcript
-  let transcriptText = "";
-  try {
-    transcriptText = exportDocAsText(docId);
-    Logger.log(`      📄 Transcript downloaded (${transcriptText.length} chars)`);
-  } catch (e) {
-    Logger.log(`      ❌ Transcript download failed: ${e.message}`);
-    resultSheet.appendRow([
-      docId, record.date, fullTitle, record.duration, record.link,
-      "ERROR", `Download Failed: ${e.message}`, 
-      "", "", "", "", "", "", 0, 0, 0
-    ]);
-    return;
+  // Step 3: Use transcript (already downloaded during validation)
+  let transcriptText = record.transcriptText;
+  
+  if (!transcriptText) {
+    // Fallback: download again if not passed
+    Logger.log(`      📄 Downloading transcript...`);
+    try {
+      transcriptText = exportDocAsText(docId);
+    } catch (e) {
+      Logger.log(`      ❌ Download failed: ${e.message}`);
+      resultSheet.appendRow([
+        docId, record.date, fullTitle, record.duration, record.link,
+        "ERROR", `Download Failed: ${e.message}`, 
+        "", "", "", "", "", "", 0, 0, 0
+      ]);
+      return;
+    }
   }
+  
+  Logger.log(`      📄 Transcript ready (${transcriptText.length} chars)`);
   
   // Step 4: Build prompt
   const prompt = `
@@ -333,7 +698,7 @@ REQUIRED TOPICS:
 ${topicList}
 
 TASK:
-1. Intro: Did the trainer state their name?
+1. Intro: Did the trainer(attendee: Yanolja Cloud Solution Training Hub) state their name?
 2. Greeting: Did they greet attendees?
 3. Tone: Is it professional?
 4. COVERAGE ANALYSIS:
@@ -385,7 +750,8 @@ OUTPUT JSON:
       usage.candidatesTokenCount
     ]);
     
-    Logger.log(`      ✅ Score: ${ai.qc_score}/10, Coverage: ${ai.coverage_percentage}%`);
+    Logger.log(`      ✅ QC Complete - Score: ${ai.qc_score}/10, Coverage: ${ai.coverage_percentage}%`);
+    Logger.log(`      📊 Tokens: Input ${usage.promptTokenCount}, Output ${usage.candidatesTokenCount}`);
     
   } catch (e) {
     Logger.log(`      ❌ AI Analysis failed: ${e.message}`);
@@ -397,9 +763,6 @@ OUTPUT JSON:
   }
 }
 
-/**
- * Call Gemini API
- */
 function callGeminiAPI(promptText) {
   if (!CONFIG.GEMINI_API_KEY) {
     throw new Error("Gemini API Key not configured!");
